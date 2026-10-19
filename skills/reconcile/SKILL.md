@@ -21,6 +21,8 @@ The whole point of this skill vs. ad-hoc automation is that the dangerous steps 
 
 So a full run produces: a reviewed plan → Fiken drafts → (human) posts drafts → (human) marks Folio events complete.
 
+> ⚠️ **Folio's Fiken integration and this workflow don't mix.** If the integration is on, completing a Folio event books it in Fiken by itself. Creating a Fiken draft for the same charge *and* completing the event books it twice. With the integration on, book card charges by completing them in Folio (see the `folio` skill) and use this skill only to find what's missing. Ask the user which setup they have before step 4.
+
 ## Workflow
 
 ### 1. Set up classification rules (once)
@@ -37,15 +39,16 @@ cp ~/.claude/skills/reconcile/rules.example.json ~/.config/reconcile/rules.json
 FO=~/.claude/skills/folio/scripts/folio.sh
 FI=~/.claude/skills/fiken/scripts/fiken.sh
 
-bash "$FO" events 2026-05-01 2026-05-31 > /tmp/events.json
-bash "$FI" purchases 2026-05-01 2026-05-31 > /tmp/purchases.json
+W=$(mktemp -d)   # private working dir — this is financial data, keep it out of shared /tmp files
+bash "$FO" events 2026-05-01 2026-05-31 > "$W/events.json"
+bash "$FI" purchases 2026-05-01 2026-05-31 > "$W/purchases.json"
 ```
 
 ### 3. Build the plan (offline, no writes)
 
 ```bash
 R=~/.claude/skills/reconcile/scripts/reconcile.py
-python3 "$R" --events /tmp/events.json --purchases /tmp/purchases.json \
+python3 "$R" --events "$W/events.json" --purchases "$W/purchases.json" \
   --rules ~/.config/reconcile/rules.json --card-account 1949
 ```
 
@@ -62,11 +65,11 @@ You get three buckets:
 Show the proposed table to the user. Only after they're happy, create the drafts (this is safe — drafts only):
 
 ```bash
-python3 "$R" --events /tmp/events.json --purchases /tmp/purchases.json \
-  --rules ~/.config/reconcile/rules.json --card-account 1949 --json > /tmp/plan.json
+python3 "$R" --events "$W/events.json" --purchases "$W/purchases.json" \
+  --rules ~/.config/reconcile/rules.json --card-account 1949 --json > "$W/plan.json"
 
 # create one draft per proposed entry:
-jq -c '.[] | select(.status=="proposed") | .draft' /tmp/plan.json | while read -r d; do
+jq -c '.[] | select(.status=="proposed") | .draft' "$W/plan.json" | while read -r d; do
   bash "$FI" draft-purchase "$d"
 done
 ```
@@ -105,4 +108,4 @@ Plan schema, matching rules, edge cases: see [REFERENCE.md](REFERENCE.md).
 
 ---
 
-Part of **claude-skills-no** by Fredrik Salberg ([Pifre AS](https://pifre.no)). Builds on the `fiken` and `folio` skills.
+Part of **[fiken-folio-skills](https://github.com/Salberg87/fiken-folio-skills)** by Fredrik Skorge Salberg ([Pifre AS](https://pifre.no)). Builds on the `fiken` and `folio` skills.

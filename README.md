@@ -1,4 +1,4 @@
-# claude-skills-no
+# fiken-folio-skills
 
 **Fiken and Folio skills for Claude Code and other AI agents. Let your agent read your Norwegian accounting and bank, draft bookings and reconcile, without ever being able to touch the money.**
 
@@ -30,7 +30,7 @@ Once installed, just talk to your agent:
 ## Why this exists
 
 - **Covers Folio, not just Fiken.** If you bank with Folio and want an AI agent to see your transactions and help with bookkeeping, the `folio` skill does exactly that — accounts, transactions, events, receipts, statements.
-- **Safety is enforced in code, not asked for in a prompt.** Most AI-accounting tools wave a "⚠️ please confirm" comment at the model and hope. Here the guardrails are in the scripts: a payment is not a command that exists, and posting to the ledger physically refuses to run without an explicit flag. An agent that goes rogue still cannot move your money or silently book an entry.
+- **Safety is enforced in code, not asked for in a prompt.** Most AI-accounting tools wave a "⚠️ please confirm" comment at the model and hope. Here the guardrails are in the scripts: a payment is not a command that exists (and the escape hatch refuses payment endpoints), and posting to the ledger refuses to run without an explicit flag. A confused agent still can't move your money, and a booking always shows up as a deliberate, visible command.
 - **Built for the regnskap reality, not just the API.** `costs` and `result` are computed from general-ledger movement (the authoritative figure), pagination is automatic, amounts are converted from øre — the things you'd otherwise get wrong.
 - **Reconciliation that proposes, never commits.** The `reconcile` skill matches Folio charges to Fiken and drafts the bookings — but the matching is offline, the writes are drafts, and posting to the ledger or marking a bank event done stays a human decision. Automation up to the point where a mistake would cost you, and not one step further.
 
@@ -39,23 +39,26 @@ Once installed, just talk to your agent:
 These skills touch live accounting and banking data, so the guardrails are baked into the scripts, not just the prompts:
 
 - **Reads are free.** Anything that only fetches data runs without confirmation.
-- **Folio cannot move money — at all.** There is deliberately no payment command in the wrapper, and the API key it uses has no payment scope. Even a compromised or confused agent has no path to a transfer.
+- **Folio cannot move money.** There is no payment command, the `raw` escape hatch refuses writes to `/payments` and `/integration`, and every id is validated so it can't be bent into another endpoint. Use an API key without payment scope as well, so there are two independent locks.
 - **Fiken writes create drafts (kladd) only.** Posting a draft to the ledger (`bokføring`) is irreversible — it's gated behind an explicit `--confirm` flag enforced in the script _and_ the skill instructs the agent to get your OK first. No flag, no booking.
+- **Every other write through `raw` needs `--confirm` too**, in both scripts.
+- **The flag is a speed bump, not a lock.** An agent can type `--confirm`. The human check is your agent's permission prompt: in Claude Code, don't auto-approve Bash commands that contain `--confirm`, and you approve every booking yourself.
+- **Credentials stay out of sight.** Tokens are passed to curl on a file descriptor, not as arguments, so they don't show up in `ps`. The scripts only talk to `api.fiken.no` and `api.folio.no`.
 
 ## Install
 
 **Any agent, one command** (via the [`skills`](https://www.npmjs.com/package/skills) CLI):
 
 ```bash
-npx skills add Salberg87/claude-skills-no            # pick skills interactively
-npx skills add Salberg87/claude-skills-no -s '*' -g  # all skills, user-level
+npx skills add Salberg87/fiken-folio-skills            # pick skills interactively
+npx skills add Salberg87/fiken-folio-skills -s '*' -g  # all skills, user-level
 ```
 
 **Claude Code, manually:**
 
 ```bash
-git clone https://github.com/Salberg87/claude-skills-no.git
-cp -r claude-skills-no/skills/{fiken,folio,reconcile} ~/.claude/skills/
+git clone https://github.com/Salberg87/fiken-folio-skills.git
+cp -r fiken-folio-skills/skills/{fiken,folio,reconcile} ~/.claude/skills/
 ```
 
 Each skill is a self-contained folder under `skills/`. For a single project instead, copy into `.claude/skills/` inside the project. `reconcile` uses the `fiken` and `folio` skills, so install all three if you want it.
@@ -108,4 +111,4 @@ Agent-skills som lar Claude Code og andre AI-agenter jobbe med regnskapet i Fike
 
 ## License
 
-[Apache License 2.0](LICENSE) — © 2026 Fredrik Salberg / Pifre AS. See [NOTICE](NOTICE).
+[Apache License 2.0](LICENSE) — © 2026 Fredrik Skorge Salberg / Pifre AS. See [NOTICE](NOTICE).

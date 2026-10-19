@@ -18,9 +18,10 @@ Usage:
                [--rules rules.json] [--card-account 1949] [--json]
 
   # typical pipeline:
-  bash folio.sh events 2026-05-01 2026-05-31 > /tmp/ev.json
-  bash fiken.sh purchases 2026-05-01 2026-05-31 > /tmp/pu.json
-  python3 reconcile.py --events /tmp/ev.json --purchases /tmp/pu.json --rules rules.json
+  W=$(mktemp -d)
+  bash folio.sh events 2026-05-01 2026-05-31 > "$W/ev.json"
+  bash fiken.sh purchases 2026-05-01 2026-05-31 > "$W/pu.json"
+  python3 reconcile.py --events "$W/ev.json" --purchases "$W/pu.json" --rules rules.json
 
 Money: Folio amounts are strings in NOK ("438.00"); Fiken amounts are øre
 (integers). This script normalises everything to øre for matching.

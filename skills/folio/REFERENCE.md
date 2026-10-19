@@ -29,7 +29,7 @@ Dates: `YYYY-MM-DD`. Money fields are **strings** (e.g. `"1234.50"`) with a sepa
 
 ### Out of scope (NOT wrapped — by design)
 
-`POST /payments`, `GET /payments`, `GET /payments/{id}`, `DELETE /payments/{id}` (money movement), and `POST /integration/disable` (kills the API integration). The current key has no payment scope. If ever needed, use them manually in Folio or via an explicit, confirmed `raw` call — never silently.
+`POST /payments`, `GET /payments`, `GET /payments/{id}`, `DELETE /payments/{id}` (money movement), and `POST /integration/disable` (kills the API integration). Use a key without payment scope. `folio.sh` also refuses non-GET `raw` calls to any `/payments` or `/integration` path, so moving money has to happen in Folio itself.
 
 ## Key schemas
 

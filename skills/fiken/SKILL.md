@@ -68,11 +68,37 @@ bash "$F" draft-purchase '{"cash":true,"paid":true,"currency":"NOK","invoiceIssu
 bash "$F" attach-draft <draftId> ~/Downloads/kvittering.pdf
 ```
 
+**Create a sales offer / invoice DRAFT** (kladd — review and send in Fiken). Sales lines use `unitPrice` + `quantity` in øre (not net/gross), and `type` + `daysUntilDueDate` are required on both:
+
+```bash
+# Tilbud-kladd
+bash "$F" draft-offer '{"type":"offer","customerId":12345,"daysUntilDueDate":14,
+  "lines":[{"description":"Nettsideredesign","unitPrice":2500000,"vatType":"HIGH","quantity":1,"incomeAccount":"3020"}]}'
+
+# Faktura-kladd (also needs bankAccountNumber + cash)
+bash "$F" draft-invoice '{"type":"invoice","customerId":12345,"daysUntilDueDate":14,
+  "bankAccountNumber":"<your account number>","cash":false,
+  "lines":[{"description":"Nettsideredesign","unitPrice":2500000,"vatType":"HIGH","quantity":1,"incomeAccount":"3020"}]}'
+```
+
 **Post a draft to the ledger** — bokføring, irreversible. Confirm with the user first, then:
 
 ```bash
 bash "$F" post-draft <draftId> --confirm
 ```
+
+## Sharp edges (learned in production)
+
+- **Line `text`/`description` max 200 characters** — the API answers 400 on longer ones. Shorten before sending.
+- **Booked entries can never be deleted** — DELETE on a booked purchase gives HTTP 405. Corrections are a credit note or reversing entry in the Fiken UI, not via the API.
+- **`vatType` is validated per account** — e.g. `EXEMPT` is rejected on some balance accounts. On "ikke gyldig mva kode for kontoen", change vatType or account; check the account's VAT setup in Fiken instead of guessing variants.
+- **The cost account goes in `incomeAccount` even for purchases** (repeated here because it surprises every time).
+- **Amounts are øre everywhere** in raw JSON; only the report commands convert.
+- **`type` + `daysUntilDueDate` are required** on both offer and invoice drafts.
+- **Attachments on sales drafts**: `POST /companies/{slug}/offers/drafts/{draftId}/attachments`, multipart with `filename`, `comment`, `file`. Works on **drafts** only — the same path on a finished offer gives 404. Delete with the attachment's `uuid` field: `DELETE …/attachments/{uuid}` → 204.
+- **`curl -F` text fields lose UTF-8** — `comment=Avtalevilkår` is stored as `AvtalevilkÃ¥r`. Leave æ/ø/å out of multipart text fields, or build the request in Python with explicit encoding. File contents are not affected.
+- **Services bought from abroad** (SaaS etc.) are reverse charge (snudd avregning, mval. § 3-30), not an ordinary HIGH purchase. Ask before drafting these.
+- **Deep links into the Fiken UI** use the draft's `uuid`, not the numeric `draftId`: purchase draft → `https://fiken.no/foretak/{slug}/handelsutkast/kjop/{uuid}`, sales draft → `…/handelsutkast/salg/{uuid}`.
 
 ## Full reference
 
@@ -81,4 +107,4 @@ For anything not wrapped: read escape hatch `bash "$F" raw GET /companies/$FIKEN
 
 ---
 
-Part of **claude-skills-no** by Fredrik Salberg ([Pifre AS](https://pifre.no)). Not affiliated with Fiken.
+Part of **[fiken-folio-skills](https://github.com/Salberg87/fiken-folio-skills)** by Fredrik Skorge Salberg ([Pifre AS](https://pifre.no)). Not affiliated with Fiken.
