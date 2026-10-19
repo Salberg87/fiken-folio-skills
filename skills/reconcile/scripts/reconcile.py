@@ -5,6 +5,8 @@ Reads Folio events (from `folio events`) and existing Fiken purchases (from
 `fiken purchases`), then for each uncompleted Folio card charge decides:
 
   - already_booked : a Fiken purchase already matches (date + amount) → skip
+  - already_drafted: an open Fiken draft already matches → skip (so running
+                     this twice never creates the same draft twice)
   - proposed       : no match → emit a Fiken purchase-DRAFT body to create
   - needs_review   : ambiguous (no vendor rule, odd currency, zero amount)
 
@@ -15,13 +17,14 @@ after a human has reviewed this plan.
 
 Usage:
   reconcile.py --events folio_events.json --purchases fiken_purchases.json \
-               [--rules rules.json] [--card-account 1949] [--json]
+               [--drafts fiken_drafts.json] [--rules rules.json] [--card-account 1949] [--json]
 
   # typical pipeline:
   W=$(mktemp -d)
   bash folio.sh events 2026-05-01 2026-05-31 > "$W/ev.json"
   bash fiken.sh purchases 2026-05-01 2026-05-31 > "$W/pu.json"
-  python3 reconcile.py --events "$W/ev.json" --purchases "$W/pu.json" --rules rules.json
+  bash fiken.sh drafts > "$W/dr.json"
+  python3 reconcile.py --events "$W/ev.json" --purchases "$W/pu.json" --drafts "$W/dr.json" --rules rules.json
 
 Money: Folio amounts are strings in NOK ("438.00"); Fiken amounts are øre
 (integers). This script normalises everything to øre for matching.
@@ -105,6 +108,20 @@ def booked_index(purchases, card_account=None):
     return idx
 
 
+def drafts_index(drafts):
+    """(date, amount_øre) -> count, from open Fiken purchase drafts.
+    Date is invoiceIssueDate; amount is the payment sum, else the line gross sum."""
+    idx = defaultdict(int)
+    for d in drafts or []:
+        date = d.get("invoiceIssueDate") or d.get("date") or ""
+        pays = d.get("payments") or []
+        tot = sum(abs(int(x.get("amount", 0) or 0)) for x in pays) if pays else \
+            sum(abs(int(l.get("gross", 0) or 0)) for l in (d.get("lines") or []))
+        if date and tot:
+            idx[(date, tot)] += 1
+    return idx
+
+
 def classify(desc, rules):
     """desc -> (account, vendor_name) via first matching keyword rule."""
     up = desc.upper()
@@ -131,6 +148,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", required=True)
     ap.add_argument("--purchases", required=True)
+    ap.add_argument("--drafts", help="open Fiken purchase drafts (from `fiken drafts`); matches are skipped as already_drafted")
     ap.add_argument("--rules", help="JSON: {\"vendors\":[{keyword,account,name}], \"goods_accounts\":[...]}")
     ap.add_argument("--card-account", help="Fiken account code charges are paid from (e.g. 1949). Used for dedup + draft payment.")
     ap.add_argument("--json", action="store_true", help="emit the full plan as JSON")
@@ -143,6 +161,7 @@ def main():
     goods_accounts = set(str(a) for a in (rules_doc.get("goods_accounts", []) if isinstance(rules_doc, dict) else []))
 
     booked = booked_index(purchases, args.card_account)
+    drafted = drafts_index(load(args.drafts)) if args.drafts else {}
     plan = []
 
     for ev in events:
@@ -169,6 +188,11 @@ def main():
         if booked.get(key, 0) > 0:
             booked[key] -= 1  # consume one match
             entry.update(status="already_booked", reason=f"matches a Fiken purchase on {date} for {entry['amount_nok']}")
+            plan.append(entry); continue
+
+        if drafted.get(key, 0) > 0:
+            drafted[key] -= 1
+            entry.update(status="already_drafted", reason=f"an open Fiken draft on {date} for {entry['amount_nok']} already exists")
             plan.append(entry); continue
 
         account, vendor = classify(desc, vendors)
@@ -207,6 +231,7 @@ def main():
     n = len(plan)
     print(f"Reconciliation plan — {n} uncompleted Folio event(s)\n")
     print(f"  already_booked : {len(by['already_booked'])}")
+    print(f"  already_drafted: {len(by['already_drafted'])}")
     print(f"  proposed       : {len(by['proposed'])}  (drafts to create — review below)")
     print(f"  needs_review   : {len(by['needs_review'])}\n")
 
@@ -229,9 +254,9 @@ def main():
 
     print("Next: review the proposed drafts. To create them (DRAFTS only, safe):")
     print("  python3 reconcile.py ... --json  > plan.json")
-    print("  # then for each proposed entry: bash fiken.sh draft-purchase '<entry.draft>'")
-    print("Booking drafts to the ledger and marking Folio events complete are")
-    print("separate, gated steps — never done by this script.")
+    print("  # then for each proposed entry: bash fiken-kladd.sh draft-purchase '<entry.draft>'")
+    print("Posting drafts and completing Folio events is the user's job in Fiken")
+    print("and Folio — never done by this script.")
 
 
 if __name__ == "__main__":
