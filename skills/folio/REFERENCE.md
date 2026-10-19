@@ -25,7 +25,7 @@ Dates: `YYYY-MM-DD`. Money fields are **strings** (e.g. `"1234.50"`) with a sepa
 | GET    | `/statement/{year}/{month}`                | path: year, month                                                                       | `application/pdf`              |
 | GET    | `/statement`                               | query: `startDate`, `endDate`                                                           | `application/pdf`              |
 
-Which skill wraps what: every GET is in `folio`. `PATCH /events/{id}` and `POST …/attachments` are in `folio-kladd` (guarded so an event never ends up with both a receipt and a category) and in `folio-bokforing` (unguarded). `…/complete` is only in `folio-bokforing`.
+Which skill wraps what: every GET is in `folio`. `PATCH /events/{id}` and `POST …/attachments` are in `folio-kladd` (guarded so an event is never left in a state where Folio completes it by itself) and in `folio-bokforing` (unguarded). `…/complete` is only in `folio-bokforing`.
 
 `/attachments/{id}/{type}` — `type` ∈ `original | cropped | 128x128 | 256x256 | 512x512`.
 `/events/{id}/attachments` — body is the raw file bytes; `Content-Type` must be `application/pdf`, `image/jpeg`, or `image/png`; set `Content-Disposition: attachment; filename="..."`.
