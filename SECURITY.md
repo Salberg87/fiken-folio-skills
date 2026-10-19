@@ -8,7 +8,7 @@ If you find a way around the guardrails, please report it privately: use [GitHub
 
 - moving or cancelling money through Folio
 - posting to the Fiken ledger or completing a Folio event with `fiken`, `folio`, `fiken-kladd` or `folio-kladd`
-- getting `folio-kladd` to leave an event with both a receipt and a category
+- getting `folio-kladd` to leave an event in a state where Folio completes it by itself
 - leaking credentials
 
 You can expect an answer within a few working days.

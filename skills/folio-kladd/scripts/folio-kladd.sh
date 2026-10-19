@@ -2,11 +2,14 @@
 # folio-kladd.sh — Forberedelse in Folio: purpose, note, participants, category
 # and receipts on bank events, without completing them.
 #
-# Folio completes an event by itself once it has both a receipt and a ledger
-# category (and whatever else the category requires). Completing is Bokføring,
-# so this script never lets an event end up with both: it reads the event first
-# and refuses the write that would join them. That step, and `complete`, belong
-# to the human in Folio or to the opt-in folio-bokforing skill.
+# Folio completes an event by itself as soon as it has a ledger category and
+# whatever that category requires. For a category that doesn't require a receipt
+# (fees, interest, many transfers), setting the category alone completes it.
+# Completing is Bokføring, so this script keeps every event in the one state
+# where Folio can't complete it: no category, or a category that requires a
+# receipt and no receipt yet. It reads the event and the category from Folio
+# before each write and refuses the write that would leave that state. That
+# step, and `complete`, belong to the human in Folio or to folio-bokforing.
 #
 # No payment commands: Folio's API can only create payment drafts that a person
 # must sign in Folio, and this skill doesn't even do that.
@@ -58,14 +61,23 @@ _write() {
   case "$code" in 2*) return 0;; *) _die "request failed (HTTP $code)";; esac
 }
 
-# Reads the event and prints "<complete> <attachments> <hasCategory>".
+# Reads the event and prints "<complete> <attachments> <categoryId or ->".
 _state() {
   _curl -fsS -H "Accept: application/json" "$BASE/events/$1" | python3 -c '
 import json, sys
 e = json.load(sys.stdin)
 e = e.get("event", e)
-print(str(bool(e.get("complete"))).lower(), len(e.get("attachments") or []),
-      "true" if e.get("ledgerCategory") else "false")'
+c = (e.get("ledgerCategory") or {}).get("id") or "-"
+print(str(bool(e.get("complete"))).lower(), len(e.get("attachments") or []), c)'
+}
+
+# Reads a ledger category and prints "true" if it requires a receipt.
+_needs_receipt() {
+  _curl -fsS -H "Accept: application/json" "$BASE/categories/$1" | python3 -c '
+import json, sys
+c = json.load(sys.stdin)
+c = c.get("category", c)
+print("true" if c.get("requiresAttachment") is True else "false")'
 }
 
 usage() {
@@ -76,12 +88,15 @@ folio-kladd — forberedelse i Folio. Fullfører aldri en hendelse.
         --purpose <t> --note <t> --participants <t> --category <ledgerCategoryId>
   attach <eventId> <file.pdf|jpg|png>   Last opp kvittering til en hendelse
 
+Folio fullfører en hendelse selv når den har kategori og det kategorien krever.
+Derfor holder skriptet hver hendelse der Folio ikke kan fullføre den: uten
+kategori, eller med en kategori som krever kvittering og ingen kvittering ennå.
 Sperrer (lest fra Folio før hvert kall):
   - fullførte hendelser endres ikke
-  - kategori settes ikke på en hendelse som har vedlegg
+  - kategori settes bare hvis den krever kvittering og hendelsen ikke har en
   - vedlegg legges ikke på en hendelse som har kategori
-  - ingen endring på en hendelse som har både vedlegg og kategori
-Det steget som kobler vedlegg og kategori, er bokføring. Det gjør du i Folio.
+  - formål/notat endres ikke på en hendelse som Folio kan fullføre
+Det steget som gjør hendelsen komplett, er bokføring. Det gjør du i Folio.
 EOF
 }
 
@@ -97,13 +112,17 @@ case "$cmd" in
       --category) cat="$2"; _id "$cat"; body=$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);d["ledgerCategoryId"]=sys.argv[1];print(json.dumps(d))' "$2"); shift 2;;
       *) _die "unknown arg: $1";;
     esac; done
-    st=$(_state "$id") || _die "could not read event $id"; read -r complete natt hascat <<<"$st"
+    st=$(_state "$id") || _die "could not read event $id"; read -r complete natt curcat <<<"$st"
     [ "$complete" = "false" ] || _die "REFUSED: event $id is already complete (bokført). Change it in Folio."
-    if [ -n "$cat" ] && [ "$natt" -gt 0 ]; then
-      _die "REFUSED: event $id has a receipt; setting a category can complete it, and that is bokføring. Set the category in Folio."
-    fi
-    if [ "$natt" -gt 0 ] && [ "$hascat" = "true" ]; then
-      _die "REFUSED: event $id has both receipt and category; any change can complete it. Finish it in Folio."
+    if [ -n "$cat" ]; then
+      [ "$natt" -eq 0 ] || _die "REFUSED: event $id has a receipt; setting a category can complete it, and that is bokføring. Set the category in Folio."
+      need=$(_needs_receipt "$cat") || _die "could not read category $cat"
+      [ "$need" = "true" ] || _die "REFUSED: category $cat doesn't require a receipt, so Folio may complete event $id as soon as it is set. That is bokføring. Set it in Folio."
+    elif [ "$curcat" != "-" ]; then
+      need=$(_needs_receipt "$curcat") || _die "could not read category $curcat"
+      if [ "$natt" -gt 0 ] || [ "$need" != "true" ]; then
+        _die "REFUSED: event $id has a category and nothing else blocks completion; any change can complete it. Finish it in Folio."
+      fi
     fi
     _write PATCH "/events/$id" -H "Content-Type: application/json" -d "$body" ;;
 
@@ -114,9 +133,9 @@ case "$cmd" in
       *.pdf) ct="application/pdf";; *.jpg|*.jpeg) ct="image/jpeg";; *.png) ct="image/png";;
       *) _die "unsupported type (pdf/jpg/png only): $file";;
     esac
-    st=$(_state "$id") || _die "could not read event $id"; read -r complete natt hascat <<<"$st"
+    st=$(_state "$id") || _die "could not read event $id"; read -r complete natt curcat <<<"$st"
     [ "$complete" = "false" ] || _die "REFUSED: event $id is already complete (bokført). Change it in Folio."
-    [ "$hascat" = "false" ] || _die "REFUSED: event $id has a category; adding the receipt can complete it, and that is bokføring. Attach it in Folio."
+    [ "$curcat" = "-" ] || _die "REFUSED: event $id has a category; adding the receipt can complete it, and that is bokføring. Attach it in Folio."
     fn=$(basename "$file" | tr -d '"\r\n')
     _write POST "/events/$id/attachments" -H "Content-Type: $ct" -H "Content-Disposition: attachment; filename=\"$fn\"" \
       --data-binary @"$file" ;;

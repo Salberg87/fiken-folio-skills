@@ -13,7 +13,7 @@ Plug-and-play **Agent Skills** for [Claude Code](https://claude.com/claude-code)
 | [**fiken**](skills/fiken) | Read [Fiken](https://fiken.no): costs/result reports, balances, purchases, sales, invoices, contacts, drafts, inbox | Read only |
 | [**folio**](skills/folio) | Read [Folio](https://folio.no): accounts, balances, transactions, bookkeeping events, receipts, statement PDFs | Read only |
 | [**fiken-kladd**](skills/fiken-kladd) | Create purchase, offer and invoice drafts; upload receipts; add contacts, projects and time entries | Prepare |
-| [**folio-kladd**](skills/folio-kladd) | Add purpose, note, category or receipt to bank events, without ever completing them | Prepare |
+| [**folio-kladd**](skills/folio-kladd) | Add purpose, note, receipt or a receipt-requiring category to bank events, without ever completing them | Prepare |
 | [**reconcile**](skills/reconcile) | Match Folio card charges against Fiken and draft what's missing; safe to run twice | Prepare |
 | [**fiken-bokforing**](skills/fiken-bokforing) | Post drafts to the ledger after you say yes | Book (opt-in) |
 | [**folio-bokforing**](skills/folio-bokforing) | Complete bank events after you say yes | Book (opt-in) |
@@ -49,7 +49,7 @@ What enforces what:
 | --- | --- | --- |
 | Moving money from Folio | Folio: API payments are drafts until a person signs. The skills also refuse `/payments`, `/salary` and `/integration`. | Yes |
 | Writes with the read skills | Fiken: a token from a user with *Se regnskapet uten å kunne gjøre endringer*. Folio: a read-only key, if your plan offers one. | Yes, with those credentials |
-| Posting in Fiken / completing in Folio from the prepare skills | No command for it; `fiken-kladd`'s `raw` only writes to an allow-list (contacts, projects, time entries, drafts, inbox); `folio-kladd` reads each event first and refuses the write that would let Folio complete it by itself | Against an agent that follows the skill, yes. An agent holding a full-access token could write its own HTTP call; Fiken has no draft-only role. |
+| Posting in Fiken / completing in Folio from the prepare skills | No command for it; `fiken-kladd`'s `raw` only writes to an allow-list (contacts, projects, time entries, drafts, inbox); `folio-kladd` reads each event and category first and refuses any write that would let Folio complete the event by itself | Against an agent that follows the skill, yes. An agent holding a full-access token could write its own HTTP call; Fiken has no draft-only role. |
 | Booking with the opt-in skills | Your agent tool's permission prompt. The commands require `--confirm`, but an agent can type that. | Only if your agent tool asks you. In Claude Code, don't auto-approve commands containing `--confirm`, and don't run bypass mode against your books. |
 
 Also: tokens are passed to curl on a file descriptor, never as arguments, so they don't show up in `ps`; every id that goes into a URL is validated; every write is logged to `~/.local/state/fiken-folio-skills/audit.jsonl` and never retried automatically, so a timeout can't become a duplicate.

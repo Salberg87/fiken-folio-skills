@@ -36,12 +36,12 @@ _Avoid_: auto-booking, full access
 
 - A **Kladd** becomes **Bokføring** only when a human posts it in Fiken
 - Completing a Folio event is **Bokføring** when Folio's Fiken integration is on, because Folio then posts it to Fiken
-- Setting a ledger category on a Folio event that already has an attachment can complete it, so it counts as **Bokføring**
+- Folio completes an event by itself once it has a category and what that category requires; a category that doesn't require a receipt completes it on its own. Any write that leaves an event in that state counts as **Bokføring**
 
 ## Example dialogue
 
 > **Dev:** "Can the agent attach the receipt and set the category on this Folio event?"
-> **Domain expert:** "Attaching is **Forberedelse**. Setting the category on an event that already has a receipt can complete it, and that's **Bokføring**, so that part is mine."
+> **Domain expert:** "Attaching is **Forberedelse**. Setting the category on an event that already has a receipt can complete it, and that's **Bokføring**, so that part is mine. Same for a category like *Refusjon* that doesn't need a receipt at all."
 
 ## Flagged ambiguities
 

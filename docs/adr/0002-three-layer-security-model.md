@@ -6,5 +6,5 @@ Following zero-trust thinking (treat the agent as possibly compromised, e.g. by 
 
 - A Fiken user with *Se regnskapet uten å kunne gjøre endringer* is the recommended source of `FIKEN_READ_TOKEN`. Not yet verified that Fiken's API honours that role for personal tokens.
 - Fiken has no draft-only role and Fiken OAuth has no scopes, so the prepare tier can't be enforced by Fiken. The README says so.
-- `folio-kladd` enforces a rule in code instead: it never leaves an event with both a receipt and a category, because Folio then completes it by itself.
+- `folio-kladd` enforces a rule in code instead: an event may only be left with no category, or with a receipt-requiring category and no receipt. Pifre's 2026 data showed every event with a category that doesn't require a receipt (40 of 40) had been completed, so a category alone can book.
 - Writes are logged locally and never retried automatically; `reconcile` skips matches against open drafts, so re-runs don't duplicate.

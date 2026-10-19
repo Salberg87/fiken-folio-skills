@@ -7,14 +7,15 @@ description: Prepare bookkeeping on Folio (folio.no) bank events without complet
 
 Fills in Folio events so the user can complete them in Folio. Uses `scripts/folio-kladd.sh` and `$FOLIO_WRITE_KEY` (a key without payment access). Read events with the `folio` skill.
 
-**Why some writes are refused.** Folio completes an event by itself once it has both a receipt and a ledger category (and whatever else the category requires). With Folio's Fiken integration on, that books it in Fiken. Completing is **bokføring**, so the script reads the event first and refuses:
+**Why some writes are refused.** Folio completes an event by itself as soon as it has a ledger category and whatever that category requires. A category that doesn't require a receipt (customer payments, refunds, VAT payments, fees) completes the event the moment it is set. With Folio's Fiken integration on, that books it in Fiken. Completing is **bokføring**, so the script keeps each event where Folio can't complete it — no category, or a category that requires a receipt and no receipt yet — and reads the event and the category from Folio before every write. It refuses:
 
 - any change to a completed event
-- a category on an event that has a receipt
+- a category that doesn't require a receipt
+- a category on an event that already has a receipt
 - a receipt on an event that has a category
-- any change to an event that already has both
+- purpose/note changes on an event that Folio could already complete
 
-So per event, do **one** of: category (+ purpose/note), *or* receipt (+ purpose/note). The step that joins them is the user's, in Folio. When refused, tell the user what's left to do in Folio; don't work around it.
+So per event, do **one** of: a receipt-requiring category (+ purpose/note), *or* a receipt (+ purpose/note). The step that makes the event complete is the user's, in Folio. When refused, tell the user what's left to do in Folio; don't work around it.
 
 **Setup (one-time):**
 
@@ -35,6 +36,7 @@ bash "$R" events 2026-05-01 2026-05-31                 # find events with comple
 bash "$R" category <ledgerCategoryId>                  # what does the category require?
 bash "$F" patch-event <eventId> --purpose "Kundemøte" --participants "Navn" --category <ledgerCategoryId>
 bash "$F" attach <eventId> ~/Downloads/kvittering.pdf  # only on events without a category
+# Categories that don't require a receipt are refused: suggest them to the user instead.
 ```
 
 **Sharp edges (learned in production):**
