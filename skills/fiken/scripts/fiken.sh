@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# fiken.sh — thin curl wrapper for the Fiken API (https://api.fiken.no/api/v2)
-# Read freely. Writes create DRAFTS only. Posting a draft to the ledger
-# (createPurchase) is gated behind --confirm AND requires explicit user OK.
+# fiken.sh — read-only curl wrapper for the Fiken API (https://api.fiken.no/api/v2)
+# This skill only reads. Drafts live in the fiken-kladd skill, posting to the
+# ledger in fiken-bokforing. Code for writes is not in this file at all.
 #
-# Auth: set FIKEN_API_TOKEN + FIKEN_COMPANY_SLUG in your environment, or put
+# Auth: set FIKEN_READ_TOKEN + FIKEN_COMPANY_SLUG in your environment, or put
 # them in a file and point FIKEN_ENV at it (e.g. export FIKEN_ENV=~/.config/fiken/.env).
-# The file should contain:
-#   FIKEN_API_TOKEN=...
-#   FIKEN_COMPANY_SLUG=your-company-as
+# Best: create the token as a Fiken user with "Se regnskapet uten å kunne gjøre
+# endringer", so Fiken itself refuses writes made with it.
 set -euo pipefail
 
 BASE="https://api.fiken.no/api/v2"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Optional env file: only loaded if FIKEN_ENV is set, the file exists, and the
 # token isn't already in the environment. No personal default path.
-if [ -z "${FIKEN_API_TOKEN:-}" ] && [ -n "${FIKEN_ENV:-}" ] && [ -f "$FIKEN_ENV" ]; then
+if [ -z "${FIKEN_READ_TOKEN:-}" ] && [ -n "${FIKEN_ENV:-}" ] && [ -f "$FIKEN_ENV" ]; then
   set -a; . "$FIKEN_ENV"; set +a
 fi
 case "${1:-}" in ""|-h|--help|help) ;; *)  # help works without credentials
-  : "${FIKEN_API_TOKEN:?FIKEN_API_TOKEN not set — export it, or set FIKEN_ENV to a file that defines it}"
+  : "${FIKEN_READ_TOKEN:?FIKEN_READ_TOKEN not set — export it, or set FIKEN_ENV to a file that defines it}"
   : "${FIKEN_COMPANY_SLUG:?FIKEN_COMPANY_SLUG not set — export it, or set FIKEN_ENV to a file that defines it}" ;;
 esac
+export FIKEN_READ_TOKEN FIKEN_COMPANY_SLUG 2>/dev/null || true   # report.py reads them
 : "${FIKEN_PAGE_SIZE:=1000}"   # lower only for testing pagination
 C="$BASE/companies/${FIKEN_COMPANY_SLUG:-}"
 
@@ -28,7 +28,7 @@ _fmt() { if command -v jq >/dev/null 2>&1; then jq .; else cat; fi; }
 _die() { echo "error: $*" >&2; exit 1; }
 # curl with the token passed via a config on a file descriptor, so it never
 # shows up in the process list (ps) the way a -H argument would.
-_curl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$FIKEN_API_TOKEN") "$@"; }
+_curl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$FIKEN_READ_TOKEN") "$@"; }
 _get() { _curl -fsS -H "Accept: application/json" "$1"; }
 
 # Input checks. Values that land in a URL go through these, so an id like
@@ -36,12 +36,6 @@ _get() { _curl -fsS -H "Accept: application/json" "$1"; }
 _num()  { [[ "$1" =~ ^[0-9]+$ ]] || _die "invalid id (numeric): $1"; }
 _date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || _die "invalid date (YYYY-MM-DD): $1"; }
 _rawpath() { [[ "$1" =~ ^/[A-Za-z0-9/_=\&?:-]*$ ]] || _die "REFUSED: path must start with / and use plain characters only: $1"; }
-_json() { # _json <@file.json | inline-json> -> validated body on stdout
-  local arg="$1" data
-  if [ "${arg:0:1}" = "@" ]; then data="$(cat "${arg:1}")"; else data="$arg"; fi
-  printf '%s' "$data" | python3 -m json.tool >/dev/null || _die "invalid JSON body"
-  printf '%s' "$data"
-}
 
 # GET a list endpoint, following fiken-api-page-count across all pages.
 _get_all() { # _get_all <path-relative-to-BASE, may contain ?query>
@@ -65,21 +59,6 @@ print(json.dumps(d, ensure_ascii=False))' "$tmp"
   rm -rf "$tmp"
 }
 
-# Write helper: never swallows the error body, surfaces HTTP code and the
-# Location header (Fiken returns the created resource URL there).
-_write() { # _write <METHOD> <url> [extra curl args...]
-  local m="$1" url="$2"; shift 2
-  local hdr body code loc
-  hdr=$(mktemp); body=$(mktemp)
-  code=$(_curl -sS -X "$m" \
-    -D "$hdr" -o "$body" -w '%{http_code}' "$@" "$url") || true
-  loc=$(awk 'tolower($1)=="location:"{print $2}' "$hdr" | tr -d '\r')
-  echo "HTTP $code${loc:+  ->  $loc}"
-  [ -s "$body" ] && _fmt < "$body"
-  rm -f "$hdr" "$body"
-  case "$code" in 2*) return 0;; *) return 1;; esac
-}
-
 # client-side date filter on a `.date` field, inclusive range.
 # (Fiken has NO date query params on purchases/sales/journalEntries — this
 # is the only correct way to filter by date.)
@@ -89,9 +68,8 @@ _filter_dates() { # _filter_dates <start> <end>
 
 usage() {
   cat <<'EOF'
-fiken — Fiken regnskaps-API helper.  Lesing fritt · skriving KUN som kladd.
+fiken — Fiken regnskaps-API, kun lesing.
 
-READ
   whoami                          Innlogget bruker
   company                         Selskapsinfo
   accounts                        Kontoplan (kode + navn)
@@ -112,19 +90,7 @@ READ
   draft <draftId>                 Én kjøpskladd
   offer-drafts                    Tilbud-kladder (sales offer drafts)
   invoice-drafts                  Faktura-kladder (sales invoice drafts)
-
-WRITE — KLADD (trygt, ingen bokføring)
-  inbox-upload <file> [desc]      Last kvittering opp til mottak
-  draft-purchase <@file.json|json>  Opprett kjøpskladd (se REFERENCE for skjema)
-  draft-offer <@file.json|json>     Opprett tilbud-kladd (se REFERENCE for skjema)
-  draft-invoice <@file.json|json>   Opprett faktura-kladd (se REFERENCE for skjema)
-  attach-draft <draftId> <file>   Legg kvittering på en kjøpskladd
-
-WRITE — BOKFØRING (irreversibelt i regnskap — krever --confirm + din OK)
-  post-draft <draftId> --confirm  Bokfør kladd → faktisk kjøp
-
-  raw GET <path>                  Escape hatch (lesing)
-  raw <METHOD> <path> [json] --confirm   Escape hatch (skriving, gated)
+  raw GET <path>                  Escape hatch, kun lesing
 
 Beløp fra Fiken er i ØRE (÷100 = NOK). Datoer YYYY-MM-DD. Lister henter
 alle sider automatisk (fiken-api-page-count).
@@ -168,55 +134,10 @@ case "$cmd" in
     if [ $# -ge 1 ]; then _get_all "/companies/$FIKEN_COMPANY_SLUG/contacts" | python3 -c "import json,sys;q=sys.argv[1].lower();print(json.dumps([c for c in json.load(sys.stdin) if q in (c.get('name','') or '').lower()],ensure_ascii=False,indent=2))" "$1"
     else _get_all "/companies/$FIKEN_COMPANY_SLUG/contacts" | _fmt; fi ;;
 
-  # ---- WRITE: drafts (safe) ----
-  inbox-upload)
-    [ $# -ge 1 ] || _die "usage: inbox-upload <file> [description]"
-    file="$1"; desc="${2:-Lastet opp via fiken-skill}"; [ -f "$file" ] || _die "no such file: $file"
-    fn=$(basename "$file")
-    # --form-string: a description starting with @ or < must not read a local file
-    _write POST "$C/inbox" -F "file=@$file" --form-string "filename=$fn" --form-string "name=$fn" --form-string "description=$desc" ;;
-
-  draft-purchase)
-    [ $# -ge 1 ] || _die "usage: draft-purchase <@file.json | inline-json>"
-    data=$(_json "$1")
-    _write POST "$C/purchases/drafts" -H "Content-Type: application/json" -d "$data" ;;
-
-  draft-offer)
-    [ $# -ge 1 ] || _die "usage: draft-offer <@file.json | inline-json>"
-    data=$(_json "$1")
-    _write POST "$C/offers/drafts" -H "Content-Type: application/json" -d "$data" ;;
-
-  draft-invoice)
-    [ $# -ge 1 ] || _die "usage: draft-invoice <@file.json | inline-json>"
-    data=$(_json "$1")
-    _write POST "$C/invoices/drafts" -H "Content-Type: application/json" -d "$data" ;;
-
-  attach-draft)
-    [ $# -ge 2 ] || _die "usage: attach-draft <draftId> <file>"
-    id="$1"; file="$2"; _num "$id"; [ -f "$file" ] || _die "no such file: $file"
-    fn=$(basename "$file")
-    _write POST "$C/purchases/drafts/$id/attachments" -F "file=@$file" --form-string "filename=$fn" ;;
-
-  # ---- WRITE: posting to ledger (GATED) ----
-  post-draft)
-    [ $# -ge 1 ] || _die "usage: post-draft <draftId> --confirm"
-    id="$1"; shift; ok=""; _num "$id"
-    while [ $# -gt 0 ]; do case "$1" in --confirm) ok=1;; esac; shift; done
-    [ -n "$ok" ] || _die "REFUSED: post-draft bokfører kladd $id til regnskapet (irreversibelt). Legg til --confirm OG bekreft med bruker først."
-    _write POST "$C/purchases/drafts/$id/createPurchase" ;;
-
   raw)
-    [ $# -ge 2 ] || _die "usage: raw <METHOD> <path> [json] [--confirm]"
-    m="$1"; path="$2"; shift 2; data=""; ok=""
-    while [ $# -gt 0 ]; do case "$1" in --confirm) ok=1;; *) data="$1";; esac; shift; done
-    _rawpath "$path"
-    if [ "$m" = "GET" ]; then
-      _get "$BASE$path" | _fmt
-    else
-      [ -n "$ok" ] || _die "REFUSED: raw $m is a write — add --confirm and confirm with user first."
-      if [ -n "$data" ]; then _write "$m" "$BASE$path" -H "Content-Type: application/json" -d "$data"
-      else _write "$m" "$BASE$path"; fi
-    fi ;;
+    [ $# -ge 2 ] || _die "usage: raw GET <path>"
+    [ "$1" = "GET" ] || _die "REFUSED: this skill only reads. Writes are in fiken-kladd / fiken-bokforing."
+    _rawpath "$2"; _get "$BASE$2" | _fmt ;;
 
   ""|-h|--help|help) usage ;;
   *) _die "unknown command: $cmd (try: fiken help)" ;;

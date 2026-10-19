@@ -1,20 +1,22 @@
 ---
 name: folio
-description: Query the Folio business-banking/accounting API (folio.no) — accounts, transactions, balances, bookkeeping events, receipts/attachments and statement PDFs. Use when the user mentions Folio, their Folio/bedriftskonto, or asks to pull transactions, check a balance, categorize/bokføre an event, upload a kvittering/receipt, or download a kontoutskrift/statement. Read + bookkeeping only — does NOT move money.
+description: Read the Folio business-bank API (folio.no) — accounts, balances, transactions, bookkeeping events, ledger categories, receipts and statement PDFs. Use when the user mentions Folio or their bedriftskonto, or asks to pull transactions, check a balance, look at events that need bookkeeping, or download a kontoutskrift. Read only; cannot write, book or move money.
 ---
 
-# Folio API
+# Folio (read)
 
-Norwegian business banking + bookkeeping. Base `https://api.folio.no/v2`, bearer auth via `$FOLIO_API_KEY`. All helper commands go through `scripts/folio.sh`.
+Norwegian business banking. Base `https://api.folio.no/v2`, bearer auth via `$FOLIO_READ_KEY`. All commands go through `scripts/folio.sh`.
 
-**Setup (one-time):** export your API key, or put it in a file and point `FOLIO_ENV` at it. See the repo README for full instructions.
+**This skill only reads.** Notes, categories and receipts on events are in the `folio-kladd` skill; completing events is in the opt-in `folio-bokforing` skill. Money is never moved by any of them: Folio's API can only create payment drafts that a person must sign in Folio, and these skills don't even do that.
+
+**Setup (one-time):**
 
 ```bash
-export FOLIO_API_KEY=...               # create at https://app.folio.no/til/api-tilgang
-# or: export FOLIO_ENV=~/.config/folio/.env   (a file defining FOLIO_API_KEY)
+export FOLIO_READ_KEY=...               # create at https://app.folio.no/til/api-tilgang
+# or: export FOLIO_ENV=~/.config/folio/.env   (a file defining FOLIO_READ_KEY)
 ```
 
-**Scope:** read + bookkeeping only. There are deliberately **no payment commands** — a read/bookkeeping API key has no payment scope, and money movement is done manually in Folio.
+Use a key with read access only if Folio offers one, otherwise a key without payment access.
 
 ## Quick start
 
@@ -23,6 +25,8 @@ F=~/.claude/skills/folio/scripts/folio.sh
 
 bash "$F" accounts                            # list accounts
 bash "$F" transactions 2026-01-01 2026-06-09  # transactions in range
+bash "$F" events 2026-05-01 2026-05-31        # events, incl. which still need bookkeeping
+bash "$F" event <eventId>                     # one event: complete? receipts? category?
 bash "$F" help                                # all commands
 ```
 
@@ -30,7 +34,7 @@ Dates are `YYYY-MM-DD`. Output is JSON (piped through `jq` if available); statem
 
 ## Common workflows
 
-**Pull transactions / reconcile**
+**Transactions and balances**
 
 ```bash
 bash "$F" transactions 2026-05-01 2026-05-31 --merchants
@@ -38,22 +42,7 @@ bash "$F" transactions 2026-05-01 2026-05-31 --account <accountNumber>   # one a
 bash "$F" balance <accountNumber> 2026-05-31
 ```
 
-**Bookkeeping an event** (events = bank events needing categorization/receipts)
-
-1. List uncompleted events: `bash "$F" events 2026-05-01 2026-05-31`
-2. Check what the target category requires (purpose? participants? attachment?):
-   `bash "$F" category <ledgerCategoryId>`
-3. Set fields: `bash "$F" patch-event <eventId> --purpose "Kundemøte" --participants "Navn" --category <ledgerCategoryId>`
-4. Attach receipt: `bash "$F" attach <eventId> ~/Downloads/kvittering.pdf`
-5. Mark done: `bash "$F" complete <eventId>` (undo: `uncomplete`)
-
-> A `LedgerCategory` flags `requiresPurpose`, `requiresParticipants`, `requiresAttachment`, `requiresReview` and the VAT code/rate. Check these (step 2) before `complete`, or completion may be rejected.
-
-**Sharp edges (learned in production):**
-
-- **An event can complete itself.** Setting `--category` on an event that already has an attachment has triggered auto-completion with no `complete` call — and in other runs it didn't (possibly async). There's no reliable way to stage attachment + category without the event going live. Warn the user before categorizing an already-attached event if they wanted a manual review step.
-- **With Folio's Fiken integration on, completing an event books it in Fiken** (the matching purchase shows up with a payment on the bank account). Don't also hand-build a Fiken purchase draft for the same card charge, or it's booked twice. Fiken drafts are still the right tool for things Folio never sees, like expenses paid with a private card (utlegg).
-- **Refunds (incoming events) need an incoming category.** An expense category has `isIncoming: false`; a refund set to it showed `complete: true` but never synced to Fiken. Use a category with `isIncoming: true`. There is no list endpoint for categories — find ids on past events (`bash "$F" events <range> | jq '.events[].ledgerCategory'`) and inspect them with `bash "$F" category <id>`.
+**What needs bookkeeping** — an event with `complete: false`. A `LedgerCategory` (`bash "$F" category <id>`) flags `requiresPurpose`, `requiresParticipants`, `requiresAttachment`, `requiresReview` and the VAT code. There is no list endpoint for categories — find ids on past events (`bash "$F" events <range> | jq '.events[].ledgerCategory'`).
 
 **Statement PDF** (e.g. for regnskap)
 
@@ -69,10 +58,16 @@ bash "$F" transactions 2026-01-01 2026-06-09 \
   | jq -r '.transactions.booked[] | [.bookingDate, .description, .transactionAmount.amount, .transactionAmount.currency] | @csv'
 ```
 
+**Export to CSV** — pull JSON, shape with `jq`:
+
+```bash
+bash "$F" transactions 2026-01-01 2026-06-09 \
+  | jq -r '.transactions.booked[] | [.bookingDate, .description, .transactionAmount.amount, .transactionAmount.currency] | @csv'
+```
+
 ## Full reference
 
-Endpoint list, query params, schemas and gotchas: see [REFERENCE.md](REFERENCE.md).
-For anything not wrapped by the helper, use the escape hatch: `bash "$F" raw GET /some/path`. Writes through `raw` need `--confirm` (get the user's OK first), and payment/integration endpoints are refused no matter what.
+Endpoints, schemas and gotchas: see [REFERENCE.md](REFERENCE.md). For anything not wrapped: `bash "$F" raw GET /some/path`.
 
 ---
 

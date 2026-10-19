@@ -6,13 +6,13 @@ revenue, 4-7 = costs, 8 = finance/tax. Fiken amounts are in øre (÷100 = NOK).
 
 Usage: report.py <mode: costs|result> <period>
        period: YYYY-MM | ytd | YYYY-MM..YYYY-MM
-Env:   FIKEN_API_TOKEN, FIKEN_COMPANY_SLUG
+Env:   FIKEN_READ_TOKEN, FIKEN_COMPANY_SLUG
 Stdlib only — no external deps.
 """
 import os, sys, json, calendar, datetime, urllib.request, urllib.error
 
 BASE = "https://api.fiken.no/api/v2"
-TOKEN = os.environ.get("FIKEN_API_TOKEN")
+TOKEN = os.environ.get("FIKEN_READ_TOKEN")
 SLUG = os.environ.get("FIKEN_COMPANY_SLUG")
 
 
@@ -89,7 +89,7 @@ def main():
         die("usage: report.py <costs|result> <YYYY-MM | ytd | YYYY-MM..YYYY-MM>")
     mode, period = sys.argv[1], sys.argv[2]
     if not TOKEN or not SLUG:
-        die("FIKEN_API_TOKEN / FIKEN_COMPANY_SLUG not set")
+        die("FIKEN_READ_TOKEN / FIKEN_COMPANY_SLUG not set")
     prev_end, end, label = parse_period(period)
     cur, prv = balances(end), balances(prev_end)
     if not cur and not prv:

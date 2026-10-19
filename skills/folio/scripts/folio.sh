@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# folio.sh — thin curl wrapper for the Folio API (https://api.folio.no/v2)
-# Read + bookkeeping only. No payment commands by design (and a read/bookkeeping
-# API key has no payment scope anyway).
+# folio.sh — read-only curl wrapper for the Folio API (https://api.folio.no/v2)
+# This skill only reads. Notes, receipts and categories live in folio-kladd,
+# completing events in folio-bokforing. Code for writes is not in this file.
 #
-# Auth: export FOLIO_API_KEY=... in your environment. Optionally point
-# FOLIO_ENV at a file that defines it (export FOLIO_ENV=~/.config/folio/.env).
+# Auth: export FOLIO_READ_KEY=... in your environment, or point FOLIO_ENV at a
+# file that defines it. Best: a Folio key with read access only, so Folio itself
+# refuses writes made with it.
 set -euo pipefail
 
 BASE="https://api.folio.no/v2"
-if [ -z "${FOLIO_API_KEY:-}" ] && [ -n "${FOLIO_ENV:-}" ] && [ -f "$FOLIO_ENV" ]; then
+if [ -z "${FOLIO_READ_KEY:-}" ] && [ -n "${FOLIO_ENV:-}" ] && [ -f "$FOLIO_ENV" ]; then
   set -a; . "$FOLIO_ENV"; set +a
 fi
 case "${1:-}" in ""|-h|--help|help) ;; *)  # help works without credentials
-  : "${FOLIO_API_KEY:?FOLIO_API_KEY not set — export it, or set FOLIO_ENV to a file that defines it}" ;;
+  : "${FOLIO_READ_KEY:?FOLIO_READ_KEY not set — export it, or set FOLIO_ENV to a file that defines it}" ;;
 esac
 
 # Pretty-print JSON if jq is present and the input parses as a single value;
@@ -33,24 +34,10 @@ _die() { echo "error: $*" >&2; exit 1; }
 
 # curl with the API key passed via a config on a file descriptor, so the key
 # never shows up in the process list (ps) the way a -H argument would.
-_curl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$FOLIO_API_KEY") "$@"; }
+_curl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$FOLIO_READ_KEY") "$@"; }
 
 _get() { # _get <path...>  -> JSON to stdout
   _curl -fsS -H "Accept: application/json" "$BASE$1"
-}
-
-# _write <curl args...> -> pretty body on stdout, "HTTP <code>" on stderr.
-# Deliberately omits -f so 4xx/5xx bodies (which carry the API's error
-# message) reach us instead of being swallowed.
-_write() {
-  local body rc=0 code
-  body=$(mktemp) || _die "mktemp failed"
-  code=$(_curl -sS -w '%{http_code}' -o "$body" "$@") || rc=$?
-  if [ "$rc" -ne 0 ]; then rm -f "$body"; _die "curl failed (exit $rc)"; fi
-  [ -s "$body" ] && _fmt < "$body"
-  rm -f "$body"
-  echo "HTTP $code" >&2
-  case "$code" in 2*) return 0;; *) _die "request failed (HTTP $code)";; esac
 }
 
 # Input checks. Every value that lands in a URL goes through one of these, so
@@ -58,20 +45,11 @@ _write() {
 # (curl collapses ../ in paths).
 _id()   { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || _die "invalid id: $1"; }
 _date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || _die "invalid date (YYYY-MM-DD): $1"; }
-
-# raw paths: plain characters only, and no writes to money-movement or
-# integration endpoints — regardless of what scope the API key has.
-_rawpath() { # _rawpath <METHOD> <path>
-  [[ "$2" =~ ^/[A-Za-z0-9/_=\&?-]*$ ]] || _die "REFUSED: path must start with / and use plain characters only: $2"
-  [ "$1" = "GET" ] && return 0
-  local p; p=$(printf '%s' "${2%%\?*}" | tr '[:upper:]' '[:lower:]' | tr -s '/')
-  case "$p/" in */payments/*|*/integration/*)
-    _die "REFUSED: $1 $2 — payment and integration endpoints are blocked in this wrapper";; esac
-}
+_rawpath() { [[ "$1" =~ ^/[A-Za-z0-9/_=\&?-]*$ ]] || _die "REFUSED: path must start with / and use plain characters only: $1"; }
 
 usage() {
   cat <<'EOF'
-folio — Folio API helper (read + bookkeeping)
+folio — Folio API helper, read only
 
   accounts                                 List accounts (number, name, type, balance)
   balance <accountNumber> <YYYY-MM-DD>     Incoming/outgoing balance on a date
@@ -81,18 +59,12 @@ folio — Folio API helper (read + bookkeeping)
   tx <id>                                  Single transaction by id
   events <start> [end] [opts]              Events (bookkeeping items) in date range
         --merchants --agents --cards         include extra info
+  event <eventId>                          Single event
   category <ledgerCategoryId>              Inspect a ledger category (vat, requirements)
-  patch-event <eventId> [opts]            Update an event (bookkeeping fields)
-        --purpose <t> --note <t> --participants <t> --category <ledgerCategoryId>
-  complete <eventId>                       Mark event complete (bookført)
-  uncomplete <eventId>                     Undo complete
-  attach <eventId> <file.pdf|jpg|png>     Upload a receipt/attachment to an event
-  download <attachmentId> <type> -o <f>   Download attachment
+  download <attachmentId> <type> -o <f>    Download attachment
         type: original|cropped|128x128|256x256|512x512
-  statement [YYYY MM | --range s e] -o f  Download account statement PDF
-  raw GET <path>                          Escape hatch, read (e.g. raw GET /accounts)
-  raw <METHOD> <path> [json] --confirm    Escape hatch, write (gated; payment and
-                                           integration endpoints are always refused)
+  statement [YYYY MM | --range s e] -o f   Download account statement PDF
+  raw GET <path>                           Escape hatch, read only
 
 Dates are YYYY-MM-DD. All output is JSON unless a PDF/file is downloaded.
 EOF
@@ -135,35 +107,9 @@ case "$cmd" in
     qs="startDate=$start"; [ -n "$end" ] && qs="$qs&endDate=$end"; qs="$qs$q"
     _get "/events?$qs" | _fmt ;;
 
+  event) [ $# -ge 1 ] || _die "usage: event <eventId>"; _id "$1"; _get "/events/$1" | _fmt ;;
+
   category) [ $# -ge 1 ] || _die "usage: category <id>"; _id "$1"; _get "/categories/$1" | _fmt ;;
-
-  patch-event)
-    [ $# -ge 1 ] || _die "usage: patch-event <eventId> [--purpose t --note t --participants t --category id]"
-    id="$1"; shift; body="{}"; _id "$id"
-    while [ $# -gt 0 ]; do case "$1" in
-      --purpose) body=$(echo "$body" | jq --arg v "$2" '.purpose=$v'); shift 2;;
-      --note) body=$(echo "$body" | jq --arg v "$2" '.note=$v'); shift 2;;
-      --participants) body=$(echo "$body" | jq --arg v "$2" '.participants=$v'); shift 2;;
-      --category) body=$(echo "$body" | jq --arg v "$2" '.ledgerCategoryId=$v'); shift 2;;
-      *) _die "unknown arg: $1";;
-    esac; done
-    _write -X PATCH -H "Content-Type: application/json" -d "$body" "$BASE/events/$id" ;;
-
-  complete) [ $# -ge 1 ] || _die "usage: complete <eventId>"; _id "$1"
-    _write -X POST "$BASE/events/$1/complete" ;;
-  uncomplete) [ $# -ge 1 ] || _die "usage: uncomplete <eventId>"; _id "$1"
-    _write -X DELETE "$BASE/events/$1/complete" ;;
-
-  attach)
-    [ $# -ge 2 ] || _die "usage: attach <eventId> <file.pdf|jpg|png>"
-    id="$1"; file="$2"; _id "$id"; [ -f "$file" ] || _die "no such file: $file"
-    case "$file" in
-      *.pdf) ct="application/pdf";; *.jpg|*.jpeg) ct="image/jpeg";; *.png) ct="image/png";;
-      *) _die "unsupported type (pdf/jpg/png only): $file";;
-    esac
-    fn=$(basename "$file" | tr -d '"\r\n')
-    _write -X POST -H "Content-Type: $ct" -H "Content-Disposition: attachment; filename=\"$fn\"" \
-      --data-binary @"$file" "$BASE/events/$id/attachments" ;;
 
   download)
     [ $# -ge 4 ] || _die "usage: download <attachmentId> <type> -o <file>  (type: original|cropped|128x128|256x256|512x512)"
@@ -193,17 +139,9 @@ case "$cmd" in
     echo "saved $out" ;;
 
   raw)
-    [ $# -ge 2 ] || _die "usage: raw <METHOD> <path> [jsonBody] [--confirm]"
-    m=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]'); path="$2"; shift 2; data=""; ok=""
-    while [ $# -gt 0 ]; do case "$1" in --confirm) ok=1;; *) data="$1";; esac; shift; done
-    _rawpath "$m" "$path"
-    if [ "$m" = "GET" ]; then
-      _get "$path" | _fmt
-    else
-      [ -n "$ok" ] || _die "REFUSED: raw $m is a write — add --confirm and confirm with the user first."
-      if [ -n "$data" ]; then _write -X "$m" -H "Content-Type: application/json" -d "$data" "$BASE$path"
-      else _write -X "$m" "$BASE$path"; fi
-    fi ;;
+    [ $# -ge 2 ] || _die "usage: raw GET <path>"
+    [ "$1" = "GET" ] || _die "REFUSED: this skill only reads. Writes are in folio-kladd / folio-bokforing."
+    _rawpath "$2"; _get "$2" | _fmt ;;
 
   ""|-h|--help|help) usage ;;
   *) _die "unknown command: $cmd (try: folio help)" ;;

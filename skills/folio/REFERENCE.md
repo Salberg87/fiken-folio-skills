@@ -1,6 +1,6 @@
 # Folio API — Reference
 
-Base URL: `https://api.folio.no/v2` · Auth: `Authorization: Bearer $FOLIO_API_KEY` (global `apiKey` security scheme, HTTP bearer).
+Base URL: `https://api.folio.no/v2` · Auth: `Authorization: Bearer <key>` (global `apiKey` security scheme, HTTP bearer). The `folio` skill uses `$FOLIO_READ_KEY`; `folio-kladd` and `folio-bokforing` use `$FOLIO_WRITE_KEY`.
 Create/manage keys at https://app.folio.no/til/api-tilgang. Companies can alternatively use an OAuth2 flow (separate `oauth2.html` spec) — not used here.
 
 Dates: `YYYY-MM-DD`. Money fields are **strings** (e.g. `"1234.50"`) with a separate `currency`.
@@ -14,6 +14,7 @@ Dates: `YYYY-MM-DD`. Money fields are **strings** (e.g. `"1234.50"`) with a sepa
 | GET    | `/accounts/{accountNumber}/transactions`   | path: accountNumber · query: `startDate`(req), `endDate`                                | `TransactionResponse`          |
 | GET    | `/transactions`                            | query: `startDate`(req), `endDate`, `includeMerchants`                                  | `TransactionResponse`          |
 | GET    | `/transactions/{id}`                       | path: id                                                                                | `Transaction` (404 if none)    |
+| GET    | `/events/{id}`                             | path: id                                                                                | `{event: Event}`               |
 | GET    | `/events`                                  | query: `startDate`(req), `endDate`, `includeMerchants`, `includeAgents`, `includeCards` | `EventsResponse`               |
 | PATCH  | `/events/{id}`                             | path: id · body: `PatchEvent`                                                           | 202 (400/403 on error)         |
 | POST   | `/events/{id}/attachments`                 | path: id · headers: `Content-Type`, `Content-Disposition` · binary body                 | 200 `CreateAttachmentResponse` |
@@ -24,12 +25,17 @@ Dates: `YYYY-MM-DD`. Money fields are **strings** (e.g. `"1234.50"`) with a sepa
 | GET    | `/statement/{year}/{month}`                | path: year, month                                                                       | `application/pdf`              |
 | GET    | `/statement`                               | query: `startDate`, `endDate`                                                           | `application/pdf`              |
 
+Which skill wraps what: every GET is in `folio`. `PATCH /events/{id}` and `POST …/attachments` are in `folio-kladd` (guarded so an event never ends up with both a receipt and a category) and in `folio-bokforing` (unguarded). `…/complete` is only in `folio-bokforing`.
+
 `/attachments/{id}/{type}` — `type` ∈ `original | cropped | 128x128 | 256x256 | 512x512`.
 `/events/{id}/attachments` — body is the raw file bytes; `Content-Type` must be `application/pdf`, `image/jpeg`, or `image/png`; set `Content-Disposition: attachment; filename="..."`.
 
 ### Out of scope (NOT wrapped — by design)
 
-`POST /payments`, `GET /payments`, `GET /payments/{id}`, `DELETE /payments/{id}` (money movement), and `POST /integration/disable` (kills the API integration). Use a key without payment scope. `folio.sh` also refuses non-GET `raw` calls to any `/payments` or `/integration` path, so moving money has to happen in Folio itself.
+- `POST /payments`, `GET /payments`, `GET /payments/{id}`, `DELETE /payments/{id}`, and the same under `/salary`. A payment created through the API is a `Draft` until a person signs it in Folio; the API has no way to sign. `DELETE` can cancel a payment that is waiting, which is why writes to these paths are refused by `folio-bokforing`'s `raw` as well.
+- `POST /integration/disable` (kills the API integration).
+
+Use a key without payment access. If Folio offers a read-only key, use that for `FOLIO_READ_KEY`.
 
 ## Key schemas
 
