@@ -16,6 +16,22 @@ Base URL: `https://api.fiken.no/api/v2` · Auth: `Authorization: Bearer $FIKEN_W
 | `draft-invoice <json>`       | POST `/companies/{slug}/invoices/drafts`                   | JSON `salesDraftRequest` (below)                     |
 | `attach-draft <id> <file>`   | POST `/companies/{slug}/purchases/drafts/{id}/attachments` | multipart: `file`, `filename`                        |
 
+### raw (allow-listed)
+
+`raw GET <path>` reads anything. `raw <POST|PUT|PATCH> <path> [json]` only reaches, under `/companies/{slug}`:
+
+| Path | Notes |
+| --- | --- |
+| `/contacts`, `/contacts/{id}` | customers and suppliers |
+| `/contacts/{id}/contactPerson`, `…/contactPerson/{id}` | |
+| `/projects`, `/projects/{id}` | `POST` needs `startDate`, `number`, `name` |
+| `/activities`, `/activities/{id}` | `POST` needs `name` |
+| `/timeEntries`, `/timeEntries/{id}` | |
+| `/{purchases,offers,invoices}/drafts`, `…/drafts/{id}`, `…/drafts/{id}/attachments` | |
+| `/inbox` | |
+
+No query strings, no `DELETE`, no `create*` actions. The list is a regex in `scripts/fiken-kladd.sh` (`RAW_WRITE_ALLOW`).
+
 ## Schemas
 
 **draftRequest** (POST purchases/drafts) — required: `cash` (bool), `paid` (bool), `lines` (array). Optional: `invoiceIssueDate`, `dueDate`, `invoiceNumber`, `contactId` (int), `projectId` (int), `currency`, `kid`, `payments[]`.

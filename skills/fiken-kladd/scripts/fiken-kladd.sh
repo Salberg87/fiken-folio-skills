@@ -27,6 +27,21 @@ _die() { echo "error: $*" >&2; exit 1; }
 # shows up in the process list (ps) the way a -H argument would.
 _curl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$FIKEN_WRITE_TOKEN") "$@"; }
 _num()  { [[ "$1" =~ ^[0-9]+$ ]] || _die "invalid id (numeric): $1"; }
+_get() { _curl -fsS -H "Accept: application/json" "$1"; }
+
+# Writes through raw may only reach records that never touch the ledger:
+# contacts, contact persons, projects, activities, time entries, drafts and the
+# inbox. Anything else — createPurchase and the other create* actions, sales,
+# purchases, journal entries, transactions — is refused here, so this list is
+# the line between Forberedelse and Bokføring for raw calls.
+RAW_WRITE_ALLOW='^/(contacts(/[0-9]+(/contactPerson(/[0-9]+)?)?)?|projects(/[0-9]+)?|activities(/[0-9]+)?|timeEntries(/[0-9]+)?|(purchases|offers|invoices)/drafts(/[0-9]+(/attachments)?)?|inbox)$'
+_rawpath() { [[ "$1" =~ ^/[A-Za-z0-9/_=\&?:-]*$ ]] || _die "REFUSED: path must start with / and use plain characters only: $1"; }
+_rawwrite() { # _rawwrite <METHOD> <path> — allow-list check for writes
+  local prefix="/companies/$FIKEN_COMPANY_SLUG" rest
+  case "$1" in POST|PUT|PATCH) ;; *) _die "REFUSED: raw $1 is not allowed in fiken-kladd (POST, PUT, PATCH only)";; esac
+  case "$2" in "$prefix"/*) rest="${2#"$prefix"}";; *) _die "REFUSED: raw writes must target /companies/$FIKEN_COMPANY_SLUG/...";; esac
+  [[ "$rest" =~ $RAW_WRITE_ALLOW ]] || _die "REFUSED: $1 $2 is not on the fiken-kladd allow-list (contacts, projects, activities, timeEntries, drafts, inbox). Posting and other ledger writes are not in this skill."
+}
 _json() { # _json <@file.json | inline-json> -> validated body on stdout
   local arg="$1" data
   if [ "${arg:0:1}" = "@" ]; then data="$(cat "${arg:1}")"; else data="$arg"; fi
@@ -74,6 +89,9 @@ fiken-kladd — forberedelse i Fiken. Lager kladder, endrer aldri regnskapet.
   draft-offer <@file.json|json>      Opprett tilbud-kladd
   draft-invoice <@file.json|json>    Opprett faktura-kladd
   attach-draft <draftId> <file>      Legg kvittering på en kjøpskladd
+  raw GET <path>                     Lesing (samme som fiken-skillen)
+  raw <POST|PUT|PATCH> <path> [json] Skriving, bare til: contacts, contactPerson,
+                                     projects, activities, timeEntries, kladder, inbox
 
 Kladder bokføres av et menneske i Fiken. Hvert skrivekall logges til
 $FIKEN_FOLIO_AUDIT_LOG (standard ~/.local/state/fiken-folio-skills/audit.jsonl).
@@ -109,6 +127,18 @@ case "$cmd" in
     id="$1"; file="$2"; _num "$id"; [ -f "$file" ] || _die "no such file: $file"
     fn=$(basename "$file")
     _write POST "$C/purchases/drafts/$id/attachments" -F "file=@$file" --form-string "filename=$fn" ;;
+
+  raw)
+    [ $# -ge 2 ] || _die "usage: raw <METHOD> <path> [json]"
+    m=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]'); path="$2"; shift 2; data=""
+    while [ $# -gt 0 ]; do case "$1" in --confirm) ;; *) data="$1";; esac; shift; done  # --confirm accepted, not needed
+    _rawpath "$path"
+    if [ "$m" = "GET" ]; then _get "$BASE$path" | _fmt; exit; fi
+    _rawwrite "$m" "$path"
+    if [ -n "$data" ]; then
+      printf '%s' "$data" | python3 -m json.tool >/dev/null || _die "invalid JSON body"
+      _write "$m" "$BASE$path" -H "Content-Type: application/json" -d "$data"
+    else _write "$m" "$BASE$path"; fi ;;
 
   ""|-h|--help|help) usage ;;
   *) _die "unknown command: $cmd (try: fiken-kladd help)" ;;

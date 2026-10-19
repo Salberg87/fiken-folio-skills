@@ -1,6 +1,6 @@
 ---
 name: fiken-kladd
-description: Prepare bookkeeping in Fiken (fiken.no) without touching the ledger — create purchase, offer and invoice drafts (kladd), upload receipts to the inbox (mottak) and attach receipts to drafts. Use when the user wants to register a cost, draft an invoice or offer, or upload a kvittering to Fiken. Never posts to the ledger; the user posts drafts in Fiken.
+description: Prepare bookkeeping in Fiken (fiken.no) without touching the ledger — create purchase, offer and invoice drafts (kladd), upload receipts to the inbox (mottak), attach receipts to drafts, and create or update contacts, contact persons, projects, activities and time entries. Use when the user wants to register a cost, draft an invoice or offer, upload a kvittering, add a customer, or log hours in Fiken. Never posts to the ledger; the user posts drafts in Fiken.
 ---
 
 # Fiken kladd (prepare)
@@ -51,6 +51,14 @@ bash "$F" draft-offer '{"type":"offer","customerId":12345,"daysUntilDueDate":14,
 bash "$F" draft-invoice '{"type":"invoice","customerId":12345,"daysUntilDueDate":14,
   "bankAccountNumber":"<your account number>","cash":false,
   "lines":[{"description":"Nettsideredesign","unitPrice":2500000,"vatType":"HIGH","quantity":1,"incomeAccount":"3020"}]}'
+```
+
+**Contacts, projects, activities and time entries** — no wrapped command, use `raw`. Writes through `raw` are limited to an allow-list in the script: `POST`/`PUT`/`PATCH` on `contacts`, `contacts/{id}/contactPerson`, `projects`, `activities`, `timeEntries`, purchase/offer/invoice `drafts` and `inbox` under your own company. Everything else is refused, including every `create*` action that turns a draft into a real document.
+
+```bash
+bash "$F" raw POST /companies/$FIKEN_COMPANY_SLUG/contacts '{"name":"Acme AS","customer":true}'
+bash "$F" raw PATCH /companies/$FIKEN_COMPANY_SLUG/timeEntries/123 '{"hours":2.5}'
+bash "$F" raw GET /companies/$FIKEN_COMPANY_SLUG/projects                    # reads work too
 ```
 
 Fiken's UI link to a draft uses its `uuid`: `https://fiken.no/foretak/{slug}/handelsutkast/kjop/{uuid}` (sales: `…/handelsutkast/salg/{uuid}`). Give the user that link so they can post it.
