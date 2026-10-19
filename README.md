@@ -1,99 +1,104 @@
 # fiken-folio-skills
 
-**Fiken and Folio skills for Claude Code and other AI agents. Let your agent read your Norwegian accounting and bank, draft bookings and reconcile, without ever being able to touch the money.**
+**Fiken and Folio skills for Claude Code and other AI agents. Let your agent read your Norwegian accounting and bank, prepare drafts and reconcile, while posting and paying stay with you.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-SKILL.md-black)](https://agentskills.io)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-ready-d97757)](https://claude.com/claude-code)
 
-Plug-and-play **Agent Skills** for [Claude Code](https://claude.com/claude-code) and other agents that read `SKILL.md`. A growing collection wrapping the tools Norwegian small businesses actually run on:
+Plug-and-play **Agent Skills** for [Claude Code](https://claude.com/claude-code) and other agents that read `SKILL.md`, for the tools Norwegian small businesses run on. You choose how far the agent may go by choosing which skills to install:
 
-| Skill                             | What it does                                                                                                                                | Scope                                                                     |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [**folio**](skills/folio)         | The [Folio](https://folio.no) business-banking API — accounts, transactions, balances, bookkeeping events, receipts, statement PDFs         | Read + bookkeeping only · **money movement is impossible**                |
-| [**fiken**](skills/fiken)         | The [Fiken](https://fiken.no) accounting API — costs/result reports, balances, transactions, purchases, sales, invoices, contacts, receipts | Read freely · writes are **drafts only** · posting to the ledger is gated |
-| [**reconcile**](skills/reconcile) | Match Folio card charges/events against Fiken and book the unmatched ones — offline planning, count-based dedup, VAT classification         | Plans offline · creates **drafts only** · booking + complete stay manual  |
+| Skill | What it does | Modus |
+| --- | --- | --- |
+| [**fiken**](skills/fiken) | Read [Fiken](https://fiken.no): costs/result reports, balances, purchases, sales, invoices, contacts, drafts, inbox | Read only |
+| [**folio**](skills/folio) | Read [Folio](https://folio.no): accounts, balances, transactions, bookkeeping events, receipts, statement PDFs | Read only |
+| [**fiken-kladd**](skills/fiken-kladd) | Create purchase, offer and invoice drafts; upload receipts to the inbox and to drafts | Prepare |
+| [**folio-kladd**](skills/folio-kladd) | Add purpose, note, category or receipt to bank events, without ever completing them | Prepare |
+| [**reconcile**](skills/reconcile) | Match Folio card charges against Fiken and draft what's missing; safe to run twice | Prepare |
+| [**fiken-bokforing**](skills/fiken-bokforing) | Post drafts to the ledger after you say yes | Book (opt-in) |
+| [**folio-bokforing**](skills/folio-bokforing) | Complete bank events after you say yes | Book (opt-in) |
 
-Thin, auditable `curl` wrappers (bash + a little stdlib Python). No SDK, no daemon, no telemetry — you can read every line in a minute. The agent reads `SKILL.md`, runs one script, gets clean JSON or a formatted report.
+Thin, auditable `curl` wrappers (bash + a little stdlib Python). No SDK, no daemon, no telemetry — you can read every line in a minute.
 
 ## What you can ask
 
-Once installed, just talk to your agent:
-
 - *"What did we spend on software in Q3?"* (fiken `costs`)
 - *"Show the result for September next to August."* (fiken `result`)
-- *"Upload this receipt to the Fiken inbox."* (fiken `inbox-upload`)
 - *"List last week's Folio card transactions with merchant names."* (folio `transactions --merchants`)
-- *"Download the August account statement as PDF."* (folio `statement`)
+- *"Upload this receipt to the Fiken inbox."* (fiken-kladd `inbox-upload`)
+- *"Categorize September's software subscriptions in Folio."* (folio-kladd `patch-event`)
 - *"Reconcile September's Folio card charges against Fiken and draft what's missing."* (reconcile)
 
 ## Why this exists
 
-- **Covers Folio, not just Fiken.** If you bank with Folio and want an AI agent to see your transactions and help with bookkeeping, the `folio` skill does exactly that — accounts, transactions, events, receipts, statements.
-- **Safety is enforced in code, not asked for in a prompt.** Most AI-accounting tools wave a "⚠️ please confirm" comment at the model and hope. Here the guardrails are in the scripts: a payment is not a command that exists (and the escape hatch refuses payment endpoints), and posting to the ledger refuses to run without an explicit flag. A confused agent still can't move your money, and a booking always shows up as a deliberate, visible command.
-- **Built for the regnskap reality, not just the API.** `costs` and `result` are computed from general-ledger movement (the authoritative figure), pagination is automatic, amounts are converted from øre — the things you'd otherwise get wrong.
-- **Reconciliation that proposes, never commits.** The `reconcile` skill matches Folio charges to Fiken and drafts the bookings — but the matching is offline, the writes are drafts, and posting to the ledger or marking a bank event done stays a human decision. Automation up to the point where a mistake would cost you, and not one step further.
+- **Covers Folio, not just Fiken.** If you bank with Folio, the agent can see transactions and help with the bookkeeping on them.
+- **Built for the regnskap reality, not just the API.** `costs` and `result` come from general-ledger movement (the authoritative figure), pagination is automatic, amounts are converted from øre, and the sharp edges we hit in production are written into the skills.
+- **The line between preparing and booking is drawn in code and at the provider**, not in a prompt. Most AI-accounting tools ask the model to "please confirm". Here the prepare skills simply can't book.
 
-## Safety model
+## Security model
 
-These skills touch live accounting and banking data, so the guardrails are baked into the scripts, not just the prompts:
+Accounting and banking data needs a lock that doesn't depend on the agent behaving. These skills use three layers, and none of them is a prompt:
 
-- **Reads are free.** Anything that only fetches data runs without confirmation.
-- **Folio cannot move money.** There is no payment command, the `raw` escape hatch refuses writes to `/payments` and `/integration`, and every id is validated so it can't be bent into another endpoint. Use an API key without payment scope as well, so there are two independent locks.
-- **Fiken writes create drafts (kladd) only.** Posting a draft to the ledger (`bokføring`) is irreversible — it's gated behind an explicit `--confirm` flag enforced in the script _and_ the skill instructs the agent to get your OK first. No flag, no booking.
-- **Every other write through `raw` needs `--confirm` too**, in both scripts.
-- **The flag is a speed bump, not a lock.** An agent can type `--confirm`. The human check is your agent's permission prompt: in Claude Code, don't auto-approve Bash commands that contain `--confirm`, and you approve every booking yourself.
-- **Credentials stay out of sight.** Tokens are passed to curl on a file descriptor, not as arguments, so they don't show up in `ps`. The scripts only talk to `api.fiken.no` and `api.folio.no`.
+1. **The agent prepares, you commit — in the provider's own app.** Posting a draft in Fiken and completing an event in Folio are yours. Folio already works this way for money: a payment created through its API is a draft until a person signs it in Folio, and the API has no way to sign.
+2. **The code for committing isn't there unless you install it.** `fiken` and `folio` have no write commands at all; `fiken-kladd` and `folio-kladd` can't post or complete. A config flag could be flipped by the agent; code that isn't on disk can't be run. Check it yourself: `grep -rn "createPurchase\|/complete" skills/*-kladd/scripts skills/fiken/scripts skills/folio/scripts` finds nothing.
+3. **The agent gets its own, least-privileged identity.** Each tier reads its own variable (`*_READ_*` vs `*_WRITE_*`), so the read skills can run on a key the provider itself limits.
+
+What enforces what:
+
+| Risk | Stopped by | Holds even if the agent misbehaves? |
+| --- | --- | --- |
+| Moving money from Folio | Folio: API payments are drafts until a person signs. The skills also refuse `/payments`, `/salary` and `/integration`. | Yes |
+| Writes with the read skills | Fiken: a token from a user with *Se regnskapet uten å kunne gjøre endringer*. Folio: a read-only key, if your plan offers one. | Yes, with those credentials |
+| Posting in Fiken / completing in Folio from the prepare skills | No command for it; `folio-kladd` reads each event first and refuses the write that would let Folio complete it by itself | Against an agent that follows the skill, yes. An agent holding a full-access token could write its own HTTP call; Fiken has no draft-only role. |
+| Booking with the opt-in skills | Your agent tool's permission prompt. The commands require `--confirm`, but an agent can type that. | Only if your agent tool asks you. In Claude Code, don't auto-approve commands containing `--confirm`, and don't run bypass mode against your books. |
+
+Also: tokens are passed to curl on a file descriptor, never as arguments, so they don't show up in `ps`; every id that goes into a URL is validated; every write is logged to `~/.local/state/fiken-folio-skills/audit.jsonl` and never retried automatically, so a timeout can't become a duplicate.
 
 ## Install
 
-**Any agent, one command** (via the [`skills`](https://www.npmjs.com/package/skills) CLI):
+Pick your level (via the [`skills`](https://www.npmjs.com/package/skills) CLI; add `-g` for user-level):
 
 ```bash
-npx skills add Salberg87/fiken-folio-skills            # pick skills interactively
-npx skills add Salberg87/fiken-folio-skills -s '*' -g  # all skills, user-level
+# Read only
+npx skills add Salberg87/fiken-folio-skills -s fiken folio
+
+# Prepare (recommended): read + drafts + reconcile
+npx skills add Salberg87/fiken-folio-skills -s fiken folio fiken-kladd folio-kladd reconcile
+
+# Book with approval (opt-in): everything
+npx skills add Salberg87/fiken-folio-skills -s '*'
 ```
 
-**Claude Code, manually:**
-
-```bash
-git clone https://github.com/Salberg87/fiken-folio-skills.git
-cp -r fiken-folio-skills/skills/{fiken,folio,reconcile} ~/.claude/skills/
-```
-
-Each skill is a self-contained folder under `skills/`. For a single project instead, copy into `.claude/skills/` inside the project. `reconcile` uses the `fiken` and `folio` skills, so install all three if you want it.
+Only use Fiken? Leave out the `folio*` skills and `reconcile`. Manual install: copy the folders you want from `skills/` into `~/.claude/skills/`.
 
 ## Setup
 
-Each skill needs credentials in the environment. Export them in your shell, or keep them in a file and point an env var at it (the scripts auto-load it).
-
-**Fiken** — personal API token from _Fiken → Innstillinger → API_:
+**Fiken** — personal API tokens are created under *Rediger konto → API*. Fiken's API module costs 99 kr/month per company.
 
 ```bash
-export FIKEN_API_TOKEN=...
 export FIKEN_COMPANY_SLUG=your-company-as
-# or: cp skills/fiken/env.example ~/.config/fiken/.env && export FIKEN_ENV=~/.config/fiken/.env
+export FIKEN_READ_TOKEN=...    # for fiken. Best: from a user with "Se regnskapet uten å kunne gjøre endringer"
+export FIKEN_WRITE_TOKEN=...   # for fiken-kladd / fiken-bokforing: a user with full access
+# or put them in a file: export FIKEN_ENV=~/.config/fiken/.env
 ```
 
-**Folio** — API key from <https://app.folio.no/til/api-tilgang>:
+**Folio** — keys at <https://app.folio.no/til/api-tilgang>:
 
 ```bash
-export FOLIO_API_KEY=...
-# or: cp skills/folio/env.example ~/.config/folio/.env && export FOLIO_ENV=~/.config/folio/.env
+export FOLIO_READ_KEY=...      # for folio: read access only if offered
+export FOLIO_WRITE_KEY=...     # for folio-kladd / folio-bokforing: no payment access
+# or: export FOLIO_ENV=~/.config/folio/.env
 ```
 
-Requires `curl`, `python3`, and (optional, for pretty output) `jq`.
+Only have one key? You can use the same value for both variables; then the tiers are separated by which skills you installed, not by the provider. Requires `curl`, `python3`, and (optional, for pretty output) `jq`.
 
 ## Quick check
 
 ```bash
-FIKEN_API_TOKEN=... FIKEN_COMPANY_SLUG=your-company-as \
-  bash skills/fiken/scripts/fiken.sh whoami
-
-FOLIO_API_KEY=... bash skills/folio/scripts/folio.sh accounts
+bash skills/fiken/scripts/fiken.sh whoami
+bash skills/folio/scripts/folio.sh accounts
+bash skills/fiken-kladd/scripts/fiken-kladd.sh help
 ```
-
-Each script also has built-in help: `bash skills/fiken/scripts/fiken.sh help`.
 
 ## Author
 
@@ -107,7 +112,7 @@ Early, and in use for our own monthly bookkeeping at Pifre AS. Use at your own r
 
 ## På norsk
 
-Agent-skills som lar Claude Code og andre AI-agenter jobbe med regnskapet i Fiken og bedriftskontoen i Folio. Agenten kan hente kostnader og resultat, se transaksjoner, laste opp kvitteringer, lage kjøpskladder og avstemme kortkjøp i Folio mot Fiken. Bokføring krever alltid din bekreftelse, og agenten har ingen mulighet til å flytte penger. Laget for små norske AS som vil bruke mindre tid på regnskap.
+Agent-skills som lar Claude Code og andre AI-agenter jobbe med regnskapet i Fiken og bedriftskontoen i Folio. Du velger selv hvor langt agenten får gå ved å velge hvilke skills du installerer: bare lesing, forberedelse (kladder, kvitteringer, kategorier og avstemming), eller bokføring etter at du har sagt ja. Bokføring og signering skjer ellers hos deg i Fiken og Folio, og agenten kan ikke flytte penger. Laget for små norske AS som vil bruke mindre tid på regnskap.
 
 ## License
 
